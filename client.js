@@ -2,10 +2,10 @@
  * Session note (browser half).
  *
  * A small note card floats over the app frame beside the current conversation.
- * It stays put while the transcript scrolls, can be dragged anywhere inside the
- * window, and stores its text per Session in browser storage. The card is
- * registered into the documented root `shell.overlay` list slot, so plugin
- * unload removes exactly this card and its styles.
+ * It stays put while the transcript scrolls, can be dragged and resized
+ * anywhere inside the window, and stores its text per Session in browser
+ * storage. The card is registered into the documented root `shell.overlay`
+ * list slot, so plugin unload removes exactly this card and its styles.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-session-note',
@@ -19,9 +19,12 @@ window.__ModuleLoader__.load({
     const SLOT_ID = PKG + ':session-note';
     const CSS_ID = PKG + '/session-note.css';
     const POSITION_KEY = 'dsh.session-note.v1.position';
+    const SIZE_KEY = 'dsh.session-note.v1.size';
     const TEXT_KEY_PREFIX = 'dsh.session-note.v1.text.';
     const CARD_WIDTH = 288;
     const CARD_HEIGHT = 300;
+    const MIN_WIDTH = 220;
+    const MIN_HEIGHT = 180;
     const EDGE = 8;
     const RIGHT_GAP = 24;
     /** Clear the conversation header (76px) below the frame's reserved top strip. */
@@ -30,12 +33,14 @@ window.__ModuleLoader__.load({
     const zh = {
       title: '会话便签',
       move: '拖动便签',
+      resize: '调整大小',
       label: '会话便签内容',
       placeholder: '可粘贴或输入多行便签，内容随当前会话保存。',
     };
     const en = {
       title: 'Session note',
       move: 'Move note',
+      resize: 'Resize note',
       label: 'Session note text',
       placeholder: 'Paste or type a note here. It is saved with this session.',
     };
@@ -47,8 +52,6 @@ window.__ModuleLoader__.load({
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  width: min(${CARD_WIDTH}px, calc(100vw - 32px));
-  height: min(${CARD_HEIGHT}px, calc(100vh - 48px));
   overflow: hidden;
   border: 0.5px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.24));
   border-radius: var(--dsw-radius-lg, 12px);
@@ -102,7 +105,7 @@ window.__ModuleLoader__.load({
   width: 100%;
   min-height: 0;
   margin: 0;
-  padding: 10px 12px 14px;
+  padding: 10px 12px 20px;
   border: 0;
   outline: none;
   background: transparent;
@@ -116,6 +119,29 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-tertiary, #8a8a8a);
 }
 .dsh-session-note__input:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, #4176e6));
+  outline-offset: -2px;
+}
+.dsh-session-note__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.dsh-session-note__resize::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--dsw-alias-label-tertiary, #8a8a8a);
+  border-bottom: 1.5px solid var(--dsw-alias-label-tertiary, #8a8a8a);
+}
+.dsh-session-note__resize:focus-visible {
   outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, #4176e6));
   outline-offset: -2px;
 }
@@ -200,20 +226,35 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /** Keep the requested card size inside the window and above the minimums. */
+    function clampSize(width, height) {
+      const viewport = viewportSize();
+      const maxWidth = Math.max(MIN_WIDTH, viewport.width - EDGE * 2);
+      const maxHeight = Math.max(MIN_HEIGHT, viewport.height - topClearance() - EDGE * 2);
+      return {
+        width: Math.min(Math.max(MIN_WIDTH, Math.round(width)), maxWidth),
+        height: Math.min(Math.max(MIN_HEIGHT, Math.round(height)), maxHeight),
+      };
+    }
+
+    /** Restore the last saved size, or fall back to the default card size. */
+    function initialSize() {
+      const saved = readJson(SIZE_KEY);
+      const size =
+        saved !== null && Number.isFinite(saved.width) && Number.isFinite(saved.height)
+          ? { width: saved.width, height: saved.height }
+          : defaultCardSize();
+      return clampSize(size.width, size.height);
+    }
+
     /** Restore the last dragged position, or open at the right edge of the window. */
-    function initialPosition() {
-      const size = defaultCardSize();
+    function initialPosition(width, height) {
       const saved = readJson(POSITION_KEY);
       if (saved !== null && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-        return clampPosition(saved.x, saved.y, size.width, size.height);
+        return clampPosition(saved.x, saved.y, width, height);
       }
       const viewport = viewportSize();
-      return clampPosition(
-        viewport.width - size.width - RIGHT_GAP,
-        topClearance() + TOP_GAP,
-        size.width,
-        size.height,
-      );
+      return clampPosition(viewport.width - width - RIGHT_GAP, topClearance() + TOP_GAP, width, height);
     }
 
     function GripIcon() {
@@ -272,30 +313,51 @@ window.__ModuleLoader__.load({
         );
         const panel = useSyncExternalStore(panelInfo.subscribe, panelInfo.getSnapshot, panelInfo.getSnapshot);
 
-        const [position, setPosition] = useState(initialPosition);
-        const [dragging, setDragging] = useState(false);
-        const cardRef = useRef(null);
-        const dragRef = useRef(null);
-
-        useEffect(() => {
-          const onResize = () => {
-            const element = cardRef.current;
-            const width = element === null ? defaultCardSize().width : element.offsetWidth;
-            const height = element === null ? defaultCardSize().height : element.offsetHeight;
-            setPosition((previous) => {
-              const next = clampPosition(previous.x, previous.y, width, height);
-              if (next.x === previous.x && next.y === previous.y) return previous;
-              writeJson(POSITION_KEY, next);
-              return next;
-            });
-          };
-          window.addEventListener('resize', onResize);
-          return () => window.removeEventListener('resize', onResize);
-        }, []);
-
-        const sessionId = binding !== null && binding !== undefined && typeof binding.key === 'string' ? binding.key : undefined;
+        const sessionId =
+          binding !== null && binding !== undefined && typeof binding.key === 'string' ? binding.key : undefined;
         const activePanelId = panel === null || panel === undefined ? null : panel.activePanelId;
         const conversationVisible = activePanelId === null || activePanelId === undefined;
+
+        const [initial] = useState(() => {
+          const size = initialSize();
+          return { size, position: initialPosition(size.width, size.height) };
+        });
+        const [size, setSize] = useState(initial.size);
+        const [position, setPosition] = useState(initial.position);
+        const [dragging, setDragging] = useState(false);
+        const [resizing, setResizing] = useState(false);
+        const cardRef = useRef(null);
+        const dragRef = useRef(null);
+        const resizeRef = useRef(null);
+        const sizeRef = useRef(size);
+        const positionRef = useRef(position);
+        sizeRef.current = size;
+        positionRef.current = position;
+
+        /* Re-fit the card after the window changes size. */
+        useEffect(() => {
+          const onWindowResize = () => {
+            const nextSize = clampSize(sizeRef.current.width, sizeRef.current.height);
+            const nextPosition = clampPosition(
+              positionRef.current.x,
+              positionRef.current.y,
+              nextSize.width,
+              nextSize.height,
+            );
+            if (nextSize.width !== sizeRef.current.width || nextSize.height !== sizeRef.current.height) {
+              sizeRef.current = nextSize;
+              setSize(nextSize);
+              writeJson(SIZE_KEY, nextSize);
+            }
+            if (nextPosition.x !== positionRef.current.x || nextPosition.y !== positionRef.current.y) {
+              positionRef.current = nextPosition;
+              setPosition(nextPosition);
+              writeJson(POSITION_KEY, nextPosition);
+            }
+          };
+          window.addEventListener('resize', onWindowResize);
+          return () => window.removeEventListener('resize', onWindowResize);
+        }, []);
 
         const onPointerDown = (event) => {
           if (event.pointerType === 'mouse' && event.button !== 0) return;
@@ -322,8 +384,8 @@ window.__ModuleLoader__.load({
           const drag = dragRef.current;
           if (drag === null || drag.pointerId !== event.pointerId) return;
           const element = cardRef.current;
-          const width = element === null ? defaultCardSize().width : element.offsetWidth;
-          const height = element === null ? defaultCardSize().height : element.offsetHeight;
+          const width = element === null ? sizeRef.current.width : element.offsetWidth;
+          const height = element === null ? sizeRef.current.height : element.offsetHeight;
           const next = clampPosition(
             drag.originX + event.clientX - drag.startX,
             drag.originY + event.clientY - drag.startY,
@@ -352,6 +414,86 @@ window.__ModuleLoader__.load({
           }
         };
 
+        const onResizePointerDown = (event) => {
+          if (event.pointerType === 'mouse' && event.button !== 0) return;
+          const element = cardRef.current;
+          if (element === null) return;
+          resizeRef.current = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            startWidth: element.offsetWidth,
+            startHeight: element.offsetHeight,
+          };
+          try {
+            event.currentTarget.setPointerCapture(event.pointerId);
+          } catch {
+            /* Pointer capture is an enhancement; resizing still tracks this element. */
+          }
+          setResizing(true);
+          event.preventDefault();
+          event.stopPropagation();
+        };
+
+        const onResizePointerMove = (event) => {
+          const drag = resizeRef.current;
+          if (drag === null || drag.pointerId !== event.pointerId) return;
+          const nextSize = clampSize(
+            drag.startWidth + event.clientX - drag.startX,
+            drag.startHeight + event.clientY - drag.startY,
+          );
+          const nextPosition = clampPosition(
+            positionRef.current.x,
+            positionRef.current.y,
+            nextSize.width,
+            nextSize.height,
+          );
+          sizeRef.current = nextSize;
+          positionRef.current = nextPosition;
+          setSize(nextSize);
+          setPosition(nextPosition);
+        };
+
+        const finishResize = (event) => {
+          const drag = resizeRef.current;
+          if (drag === null || drag.pointerId !== event.pointerId) return;
+          commitResize();
+        };
+
+        const commitResize = () => {
+          if (resizeRef.current === null) return;
+          resizeRef.current = null;
+          setResizing(false);
+          writeJson(SIZE_KEY, { width: sizeRef.current.width, height: sizeRef.current.height });
+          writeJson(POSITION_KEY, { x: positionRef.current.x, y: positionRef.current.y });
+        };
+
+        const onResizeHandleKeyDown = (event) => {
+          const step = event.shiftKey ? 48 : 16;
+          let dw = 0;
+          let dh = 0;
+          if (event.key === 'ArrowRight') dw = step;
+          else if (event.key === 'ArrowLeft') dw = -step;
+          else if (event.key === 'ArrowDown') dh = step;
+          else if (event.key === 'ArrowUp') dh = -step;
+          else return;
+          event.preventDefault();
+          event.stopPropagation();
+          const nextSize = clampSize(sizeRef.current.width + dw, sizeRef.current.height + dh);
+          const nextPosition = clampPosition(
+            positionRef.current.x,
+            positionRef.current.y,
+            nextSize.width,
+            nextSize.height,
+          );
+          sizeRef.current = nextSize;
+          positionRef.current = nextPosition;
+          setSize(nextSize);
+          setPosition(nextPosition);
+          writeJson(SIZE_KEY, nextSize);
+          writeJson(POSITION_KEY, nextPosition);
+        };
+
         useEffect(() => {
           if (!dragging) return undefined;
           const end = () => commitDragEnd();
@@ -362,6 +504,17 @@ window.__ModuleLoader__.load({
             window.removeEventListener('pointercancel', end);
           };
         }, [dragging]);
+
+        useEffect(() => {
+          if (!resizing) return undefined;
+          const end = () => commitResize();
+          window.addEventListener('pointerup', end);
+          window.addEventListener('pointercancel', end);
+          return () => {
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+          };
+        }, [resizing]);
 
         const onHandleKeyDown = (event) => {
           const step = event.shiftKey ? 48 : 16;
@@ -375,8 +528,8 @@ window.__ModuleLoader__.load({
           event.preventDefault();
           event.stopPropagation();
           const element = cardRef.current;
-          const width = element === null ? defaultCardSize().width : element.offsetWidth;
-          const height = element === null ? defaultCardSize().height : element.offsetHeight;
+          const width = element === null ? sizeRef.current.width : element.offsetWidth;
+          const height = element === null ? sizeRef.current.height : element.offsetHeight;
           setPosition((previous) => {
             const next = clampPosition(previous.x + dx, previous.y + dy, width, height);
             writeJson(POSITION_KEY, next);
@@ -397,7 +550,12 @@ window.__ModuleLoader__.load({
               ref: cardRef,
               className: 'dsh-session-note',
               'data-dragging': dragging ? '' : undefined,
-              style: { left: position.x + 'px', top: position.y + 'px' },
+              style: {
+                left: position.x + 'px',
+                top: position.y + 'px',
+                width: size.width + 'px',
+                height: size.height + 'px',
+              },
               role: 'region',
               'aria-label': t('title'),
             },
@@ -423,6 +581,23 @@ window.__ModuleLoader__.load({
               h('span', { className: 'dsh-session-note__title' }, t('title')),
             ),
             h(NoteBody, { key: sessionId, sessionId, t }),
+            h('div', {
+              key: 'resize',
+              className: 'dsh-session-note__resize',
+              role: 'button',
+              tabIndex: 0,
+              'aria-label': t('resize'),
+              title: t('resize'),
+              onPointerDown: onResizePointerDown,
+              onPointerMove: onResizePointerMove,
+              onPointerUp: finishResize,
+              onPointerCancel: finishResize,
+              onLostPointerCapture: () => {
+                resizeRef.current = null;
+                setResizing(false);
+              },
+              onKeyDown: onResizeHandleKeyDown,
+            }),
           ),
         );
       };
