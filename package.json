@@ -1,0 +1,48 @@
+{
+  "name": "dsh-session-note",
+  "version": "1.0.0",
+  "description": "A draggable sticky note pinned beside the conversation in the DeepSeek Harness Web UI; it stays put while the transcript scrolls and saves its text per session.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "sticky-notes",
+    "notes",
+    "session"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kkomia/dsh-session-note.git"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-session"
+      ]
+    }
+  }
+}

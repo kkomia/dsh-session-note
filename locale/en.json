@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session note",
+    "description": "Shows a draggable note panel beside the current conversation and saves its text with the session."
+  }
+}
