@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-note",
   "version": "1.0.0",
-  "description": "A draggable, resizable sticky note pinned beside the conversation in the DeepSeek Harness Web UI; it stays put while the transcript scrolls and saves its text per session.",
+  "description": "A draggable, resizable, collapsible sticky note pinned beside the conversation in the DeepSeek Harness Web UI; it stays put while the transcript scrolls and saves its text per session.",
   "license": "MIT",
   "type": "module",
   "keywords": [

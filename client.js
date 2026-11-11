@@ -20,6 +20,7 @@ window.__ModuleLoader__.load({
     const CSS_ID = PKG + '/session-note.css';
     const POSITION_KEY = 'dsh.session-note.v1.position';
     const SIZE_KEY = 'dsh.session-note.v1.size';
+    const MINIMIZED_KEY = 'dsh.session-note.v1.minimized';
     const TEXT_KEY_PREFIX = 'dsh.session-note.v1.text.';
     const CARD_WIDTH = 288;
     const CARD_HEIGHT = 300;
@@ -34,6 +35,8 @@ window.__ModuleLoader__.load({
       title: '会话便签',
       move: '拖动便签',
       resize: '调整大小',
+      minimize: '最小化便签',
+      restore: '展开便签',
       label: '会话便签内容',
       placeholder: '可粘贴或输入多行便签，内容随当前会话保存。',
     };
@@ -41,6 +44,8 @@ window.__ModuleLoader__.load({
       title: 'Session note',
       move: 'Move note',
       resize: 'Resize note',
+      minimize: 'Minimize note',
+      restore: 'Expand note',
       label: 'Session note text',
       placeholder: 'Paste or type a note here. It is saved with this session.',
     };
@@ -87,6 +92,8 @@ window.__ModuleLoader__.load({
   outline-offset: -2px;
 }
 .dsh-session-note__title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: var(--dsw-alias-label-secondary, #5c5c5c);
   font-size: 12px;
@@ -98,6 +105,32 @@ window.__ModuleLoader__.load({
 .dsh-session-note__grip {
   flex-shrink: 0;
   color: var(--dsw-alias-label-tertiary, #8a8a8a);
+}
+.dsh-session-note__minimize {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0 -6px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #8a8a8a);
+  cursor: pointer;
+}
+.dsh-session-note__minimize:hover {
+  background: var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, 0.12));
+  color: var(--dsw-alias-label-secondary, #5c5c5c);
+}
+.dsh-session-note__minimize:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, #4176e6));
+  outline-offset: 1px;
+}
+.dsh-session-note[data-minimized] .dsh-session-note__input {
+  display: none;
 }
 .dsh-session-note__input {
   box-sizing: border-box;
@@ -163,6 +196,25 @@ window.__ModuleLoader__.load({
     function writeJson(key, value) {
       try {
         window.localStorage.setItem(key, JSON.stringify(value));
+      } catch {
+        /* Storage is unavailable; the note still works for this page view. */
+      }
+    }
+
+    /** Read a boolean flag from browser storage, tolerating disabled storage. */
+    function readFlag(key) {
+      try {
+        return window.localStorage.getItem(key) === '1';
+      } catch {
+        return false;
+      }
+    }
+
+    /** Persist a boolean flag, tolerating disabled storage. */
+    function writeFlag(key, value) {
+      try {
+        if (value) window.localStorage.setItem(key, '1');
+        else window.localStorage.removeItem(key);
       } catch {
         /* Storage is unavailable; the note still works for this page view. */
       }
@@ -274,6 +326,37 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /** The minimize/restore chevron shown at the right of the title bar. */
+    function MinimizeIcon({ collapsed }) {
+      return h(
+        'svg',
+        {
+          className: 'dsh-session-note__minimize-icon',
+          viewBox: '0 0 16 16',
+          width: 14,
+          height: 14,
+          'aria-hidden': 'true',
+          focusable: 'false',
+        },
+        collapsed
+          ? h('path', {
+              d: 'M4 10l4-4 4 4',
+              fill: 'none',
+              stroke: 'currentColor',
+              strokeWidth: 1.6,
+              strokeLinecap: 'round',
+              strokeLinejoin: 'round',
+            })
+          : h('path', {
+              d: 'M4 8h8',
+              fill: 'none',
+              stroke: 'currentColor',
+              strokeWidth: 1.6,
+              strokeLinecap: 'round',
+            }),
+      );
+    }
+
     /** The editable, session-scoped note body. Remounted per Session via its key. */
     function NoteBody({ sessionId, t }) {
       const [value, setValue] = useState(() => readText(sessionId));
@@ -326,29 +409,36 @@ window.__ModuleLoader__.load({
         const [position, setPosition] = useState(initial.position);
         const [dragging, setDragging] = useState(false);
         const [resizing, setResizing] = useState(false);
+        const [minimized, setMinimized] = useState(() => readFlag(MINIMIZED_KEY));
         const cardRef = useRef(null);
         const dragRef = useRef(null);
         const resizeRef = useRef(null);
         const sizeRef = useRef(size);
         const positionRef = useRef(position);
+        const minimizedRef = useRef(minimized);
         sizeRef.current = size;
         positionRef.current = position;
+        minimizedRef.current = minimized;
 
         /* Re-fit the card after the window changes size. */
         useEffect(() => {
           const onWindowResize = () => {
-            const nextSize = clampSize(sizeRef.current.width, sizeRef.current.height);
-            const nextPosition = clampPosition(
-              positionRef.current.x,
-              positionRef.current.y,
-              nextSize.width,
-              nextSize.height,
-            );
-            if (nextSize.width !== sizeRef.current.width || nextSize.height !== sizeRef.current.height) {
-              sizeRef.current = nextSize;
-              setSize(nextSize);
-              writeJson(SIZE_KEY, nextSize);
+            const element = cardRef.current;
+            let width = sizeRef.current.width;
+            let height = sizeRef.current.height;
+            if (!minimizedRef.current) {
+              const nextSize = clampSize(sizeRef.current.width, sizeRef.current.height);
+              width = nextSize.width;
+              height = nextSize.height;
+              if (nextSize.width !== sizeRef.current.width || nextSize.height !== sizeRef.current.height) {
+                sizeRef.current = nextSize;
+                setSize(nextSize);
+                writeJson(SIZE_KEY, nextSize);
+              }
+            } else if (element !== null) {
+              height = element.offsetHeight;
             }
+            const nextPosition = clampPosition(positionRef.current.x, positionRef.current.y, width, height);
             if (nextPosition.x !== positionRef.current.x || nextPosition.y !== positionRef.current.y) {
               positionRef.current = nextPosition;
               setPosition(nextPosition);
@@ -358,6 +448,50 @@ window.__ModuleLoader__.load({
           window.addEventListener('resize', onWindowResize);
           return () => window.removeEventListener('resize', onWindowResize);
         }, []);
+
+        /* Keep the card on screen when it collapses or expands. */
+        useEffect(() => {
+          const element = cardRef.current;
+          if (element === null) return;
+          if (minimized) {
+            const nextPosition = clampPosition(
+              positionRef.current.x,
+              positionRef.current.y,
+              element.offsetWidth,
+              element.offsetHeight,
+            );
+            if (nextPosition.x !== positionRef.current.x || nextPosition.y !== positionRef.current.y) {
+              positionRef.current = nextPosition;
+              setPosition(nextPosition);
+              writeJson(POSITION_KEY, nextPosition);
+            }
+            return;
+          }
+          const nextSize = clampSize(sizeRef.current.width, sizeRef.current.height);
+          if (nextSize.width !== sizeRef.current.width || nextSize.height !== sizeRef.current.height) {
+            sizeRef.current = nextSize;
+            setSize(nextSize);
+            writeJson(SIZE_KEY, nextSize);
+          }
+          const nextPosition = clampPosition(
+            positionRef.current.x,
+            positionRef.current.y,
+            nextSize.width,
+            nextSize.height,
+          );
+          if (nextPosition.x !== positionRef.current.x || nextPosition.y !== positionRef.current.y) {
+            positionRef.current = nextPosition;
+            setPosition(nextPosition);
+            writeJson(POSITION_KEY, nextPosition);
+          }
+        }, [minimized]);
+
+        const toggleMinimized = () => {
+          const next = !minimizedRef.current;
+          minimizedRef.current = next;
+          setMinimized(next);
+          writeFlag(MINIMIZED_KEY, next);
+        };
 
         const onPointerDown = (event) => {
           if (event.pointerType === 'mouse' && event.button !== 0) return;
@@ -550,11 +684,12 @@ window.__ModuleLoader__.load({
               ref: cardRef,
               className: 'dsh-session-note',
               'data-dragging': dragging ? '' : undefined,
+              'data-minimized': minimized ? '' : undefined,
               style: {
                 left: position.x + 'px',
                 top: position.y + 'px',
                 width: size.width + 'px',
-                height: size.height + 'px',
+                height: minimized ? undefined : size.height + 'px',
               },
               role: 'region',
               'aria-label': t('title'),
@@ -579,25 +714,49 @@ window.__ModuleLoader__.load({
               },
               h(GripIcon),
               h('span', { className: 'dsh-session-note__title' }, t('title')),
+              h(
+                'button',
+                {
+                  key: 'minimize',
+                  type: 'button',
+                  className: 'dsh-session-note__minimize',
+                  'aria-label': minimized ? t('restore') : t('minimize'),
+                  'aria-expanded': minimized ? 'false' : 'true',
+                  title: minimized ? t('restore') : t('minimize'),
+                  onPointerDown: (event) => {
+                    event.stopPropagation();
+                  },
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    toggleMinimized();
+                  },
+                  onKeyDown: (event) => {
+                    event.stopPropagation();
+                  },
+                },
+                h(MinimizeIcon, { collapsed: minimized }),
+              ),
             ),
             h(NoteBody, { key: sessionId, sessionId, t }),
-            h('div', {
-              key: 'resize',
-              className: 'dsh-session-note__resize',
-              role: 'button',
-              tabIndex: 0,
-              'aria-label': t('resize'),
-              title: t('resize'),
-              onPointerDown: onResizePointerDown,
-              onPointerMove: onResizePointerMove,
-              onPointerUp: finishResize,
-              onPointerCancel: finishResize,
-              onLostPointerCapture: () => {
-                resizeRef.current = null;
-                setResizing(false);
-              },
-              onKeyDown: onResizeHandleKeyDown,
-            }),
+            minimized
+              ? null
+              : h('div', {
+                  key: 'resize',
+                  className: 'dsh-session-note__resize',
+                  role: 'button',
+                  tabIndex: 0,
+                  'aria-label': t('resize'),
+                  title: t('resize'),
+                  onPointerDown: onResizePointerDown,
+                  onPointerMove: onResizePointerMove,
+                  onPointerUp: finishResize,
+                  onPointerCancel: finishResize,
+                  onLostPointerCapture: () => {
+                    resizeRef.current = null;
+                    setResizing(false);
+                  },
+                  onKeyDown: onResizeHandleKeyDown,
+                }),
           ),
         );
       };
